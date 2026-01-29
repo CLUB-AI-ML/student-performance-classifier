@@ -1,0 +1,63 @@
+name: Post Evaluation Comment
+
+on:
+  workflow_run:
+    workflows: ["PR Submission Check"]
+    types:
+      - completed
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: submission-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            // 1. Read the PR number
+            const prNumber = Number(fs.readFileSync('./pr_number.txt', 'utf8'));
+            
+            // 2. Read the Evaluation Output
+            const output = fs.readFileSync('./evaluation_result.txt', 'utf8');
+            
+            // 3. Parse the output (Same logic as your original script)
+            const lines = output.split('\n');
+            let passed = false;
+            let points = 0;
+            let feedback = [];
+
+            for (const line of lines) {
+              if (line.startsWith('Passed: ')) {
+                passed = line.split(': ')[1].trim() === 'True';
+              } else if (line.startsWith('Points: ')) {
+                points = parseInt(line.split(': ')[1]);
+              } else if (line.startsWith('- ')) {
+                feedback.push(line.substring(2));
+              }
+            }
+
+            const commentBody = `## Submission Evaluation Results\n\n**Points Awarded:** ${points}/150\n\n**Status:** ${passed ? '✅ Passed' : '❌ Needs Improvement'}\n\n**Feedback:**\n${feedback.map(f => `- ${f}`).join('\n')}`;
+
+            // 4. Post the comment safely
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: commentBody
+            });
